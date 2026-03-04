@@ -1,0 +1,180 @@
+---
+title: "Ecotourism Tutorial"
+subtitle: "Joining occurrence, tourism, and weather data"
+author: "GSoC 2026 Contributor"
+quarto-required: ">=1.8.0"
+format:
+    unilur-html:
+        output-file: tutorial.html
+        embed-resources: true
+        css: "../assets/tutorial.css"
+    unilur-html+solution:
+        output-file: tutorialsol.html
+        embed-resources: true
+        css: "../assets/tutorial.css"
+        show-solution: true
+---
+
+```{r include=FALSE}
+#| echo: false
+library(tidyverse)
+library(lubridate)
+library(ecotourism)
+library(kableExtra)
+library(conflicted)
+
+# Set up chunk for all slides
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.height = 4,
+  fig.align = "center",
+  out.width = "100%",
+  code.line.numbers = FALSE,
+  fig.retina = 4,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  cache = FALSE,
+  dev.args = list(pointsize = 11)
+)
+options(
+  digits = 2,
+  width = 80,
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis",
+  ggplot2.discrete.colour = c("#D55E00", "#0072B2", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442"),
+  ggplot2.discrete.fill = c("#D55E00", "#0072B2", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442")
+)
+theme_set(theme_bw(base_size = 14) +
+   theme(
+     aspect.ratio = 1,
+     plot.background = element_rect(fill = 'transparent', colour = NA),
+     plot.title.position = "plot",
+     plot.title = element_text(size = 24),
+     panel.background = element_rect(fill = 'transparent', colour = NA),
+     legend.background = element_rect(fill = 'transparent', colour = NA),
+     legend.key = element_rect(fill = 'transparent', colour = NA)
+   )
+)
+
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::slice)
+
+tourism_total <- tourism_quarterly |>
+  group_by(ws_id, year, quarter) |>
+  summarise(total_trips = sum(trips, na.rm = TRUE), .groups = "drop")
+```
+
+## 🎯 Objectives
+
+Practice joining wildlife occurrence records with tourism and weather data from the **ecotourism** package, and explore how visitor numbers relate to wildlife sightings across different regions, organisms, and months.
+
+## 🔧 Preparation
+
+- Install the **ecotourism** package by running `remotes::install_github("vahdatjavad/ecotourism")` in the Console.
+- Complete the weekly quiz, before the deadline!
+- Open your RStudio Project for this unit, (the one you created in week 1). Create a `.qmd` document for this week's activities.
+
+## 📥 Exercises
+
+The **ecotourism** package contains wildlife occurrence records and quarterly tourism trip counts for Australia, linked by `ws_id`. In the setup chunk, `tourism_total` has been created by summing trips across purposes per `ws_id`, `year`, and `quarter`.
+
+```{r}
+#| echo: false
+desc <- tibble(
+  Object = c("gouldian_finch", "manta_rays", "glowworms",
+             "tourism_quarterly", "weather"),
+  Description = c(
+    "Gouldian Finch occurrence records (2014–2024)",
+    "Manta Ray occurrence records (2014–2024)",
+    "Glowworm occurrence records (2014–2024)",
+    "Quarterly tourism trips by region and purpose",
+    "Daily weather by station: temp, max, min, prcp linked by ws_id and date"
+  )
+)
+kbl(desc, table.attr = 'data-quarto-disable-processing="true"') |>
+  kable_styling(full_width = FALSE) |>
+  column_spec(1, width = "4cm", border_right = TRUE) |>
+  column_spec(2, width = "10cm")
+```
+
+**Question 1 (one region).** Join `gouldian_finch` with `tourism_total` and `ecotourism::weather`, keeping only sightings from **Western Australia** (`obs_state == "Western Australia"`). How many sightings are in the joined table? How many have a non-`NA` value for `max` (daily maximum temperature)? What does this tell you about the completeness of the weather data in the current package?
+
+::: unilur-solution
+```{r}
+wa_joined <- gouldian_finch |>
+  filter(obs_state == "Western Australia") |>
+  mutate(quarter = lubridate::quarter(date)) |>
+  left_join(tourism_total, by = c("ws_id", "year", "quarter")) |>
+  left_join(
+    ecotourism::weather |> dplyr::select(ws_id, date, temp, max, min, prcp),
+    by = c("ws_id", "date")
+  )
+
+nrow(wa_joined)
+sum(!is.na(wa_joined$max))
+```
+
+Many `max` values will be `NA` because the weather records in the current package version are incomplete — not all stations have full coverage. Completing the weather records across all Australian stations is one of the main goals of the GSoC 2026 project.
+:::
+
+**Question 2 (one organism).** Join `manta_rays` with `tourism_total` and `ecotourism::weather` across all regions and months. For each month, calculate the mean total tourism trips and the proportion of sighting days that have a non-`NA` `max` value. In which months is weather data available, and what does the pattern of missing weather tell you?
+
+::: unilur-solution
+```{r}
+manta_joined <- manta_rays |>
+  mutate(quarter = lubridate::quarter(date)) |>
+  left_join(tourism_total, by = c("ws_id", "year", "quarter")) |>
+  left_join(
+    ecotourism::weather |> dplyr::select(ws_id, date, temp, max, min, prcp),
+    by = c("ws_id", "date")
+  )
+
+manta_joined |>
+  group_by(month) |>
+  summarise(
+    mean_trips  = mean(total_trips, na.rm = TRUE),
+    n_sightings = n(),
+    pct_weather = mean(!is.na(max)) * 100
+  ) |>
+  arrange(desc(mean_trips))
+```
+
+The `pct_weather` column shows which months have weather coverage for manta ray sighting locations. Where it is low or zero, weather records are missing for those stations — completing this coverage is a key goal of the GSoC 2026 project.
+:::
+
+**Question 3 (one month).** Join `glowworms` with `tourism_total` and `ecotourism::weather`, keeping only sightings from **April** (`month == 4`). Make a scatter plot of `total_trips` against `year`, colouring by `obs_state`. Add a note to the plot title indicating how many sighting days have weather data available. What would this plot look like once the weather data is complete?
+
+::: unilur-solution
+```{r}
+glowworm_april <- glowworms |>
+  filter(month == 4) |>
+  mutate(quarter = lubridate::quarter(date)) |>
+  left_join(tourism_total, by = c("ws_id", "year", "quarter")) |>
+  left_join(
+    ecotourism::weather |> dplyr::select(ws_id, date, temp, max, min, prcp),
+    by = c("ws_id", "date")
+  )
+
+n_weather <- sum(!is.na(glowworm_april$max))
+
+glowworm_april |>
+  distinct(ws_id, year, obs_state, total_trips) |>
+  ggplot(aes(x = year, y = total_trips, colour = obs_state)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(
+    title = paste0("Tourism trips in glowworm regions — April",
+                   " (weather available for ", n_weather, " sighting days)"),
+    x      = "Year",
+    y      = "Total quarterly trips",
+    colour = "State"
+  )
+```
+
+Once the GSoC update delivers complete weather records, `max` and `min` temperature could be overlaid on this plot to reveal whether cooler April nights correlate with higher glowworm tourism activity.
+:::
+
+## 👌 Finishing up
+
+Make sure you say thanks and good-bye to your tutor. This is a time to also report what you enjoyed and what you found difficult.
